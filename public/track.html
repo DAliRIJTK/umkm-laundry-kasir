@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lacak Cucian — Laundry Bening Harian</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="track-shell">
+    <div class="track-container">
+      <header class="track-header">
+        <div class="brand-lockup">
+          <img src="/assets/logo.svg" alt="" width="32" height="32">
+          <div class="brand-meta">
+            <h1 id="track-store-name" class="page-title">Laundry Bening Harian</h1>
+            <p class="muted-text">Pelacak Status Nota Cucian</p>
+          </div>
+        </div>
+        <a href="/" class="btn btn-sm">Login Kasir</a>
+      </header>
+
+      <section class="panel" aria-label="Formulir pelacakan nota">
+        <form id="track-form" class="panel-body" novalidate>
+          <div id="track-error" class="banner banner-error hidden" role="alert"></div>
+
+          <div class="field">
+            <label for="track-code" class="field-label">Kode Nota</label>
+            <input
+              id="track-code"
+              name="code"
+              type="text"
+              class="input mono"
+              placeholder="LND-20261125-002"
+              autocomplete="off"
+              required
+            >
+          </div>
+
+          <div class="field">
+            <label for="track-phone4" class="field-label">4 Digit Terakhir No. HP</label>
+            <input
+              id="track-phone4"
+              name="phone4"
+              type="text"
+              inputmode="numeric"
+              maxlength="4"
+              class="input mono"
+              placeholder="1234"
+              autocomplete="off"
+              required
+            >
+          </div>
+
+          <button id="track-submit-btn" type="submit" class="btn btn-primary">Cek Status Sekarang</button>
+        </form>
+      </section>
+
+      <section id="track-result" class="panel hidden" aria-live="polite"></section>
+    </div>
+  </main>
+
+  <script type="module" src="/track.js"></script>
+</body>
+</html>

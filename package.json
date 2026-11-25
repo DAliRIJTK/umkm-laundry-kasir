@@ -1,0 +1,10 @@
+{
+  "name": "umkm-laundry-kasir",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "test": "node --no-warnings --test tests/*.test.js"
+  }
+}

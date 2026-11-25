@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kasir — Laundry Bening Harian</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- View 1: PIN Login -->
+  <main id="login-view" class="login-shell">
+    <section class="login-card" aria-labelledby="login-store-name">
+      <div class="brand-lockup">
+        <img src="/assets/logo.svg" alt="" width="36" height="36">
+        <div class="brand-meta">
+          <h1 id="login-store-name" class="page-title">Laundry Bening Harian</h1>
+          <p class="muted-text">Masuk ke meja kasir &amp; antrean cucian</p>
+        </div>
+      </div>
+
+      <div id="login-error" class="banner banner-error hidden" role="alert"></div>
+
+      <form id="login-form" class="login-form" novalidate>
+        <div class="field">
+          <label for="pin-input" class="field-label">PIN Toko</label>
+          <input
+            id="pin-input"
+            name="pin"
+            type="password"
+            inputmode="numeric"
+            maxlength="8"
+            autocomplete="current-password"
+            class="input pin-input"
+            placeholder="••••••"
+            required
+          >
+        </div>
+        <button id="login-submit-btn" type="submit" class="btn btn-primary">Buka Meja Kasir</button>
+      </form>
+
+      <div class="login-footer">
+        <p class="muted-text">Demo lokal: gunakan PIN <span class="mono">123456</span></p>
+        <a href="/track">Pelanggan? Cek status cucian di /track</a>
+      </div>
+    </section>
+  </main>
+
+  <!-- View 2: Staff Workspace -->
+  <div id="app-view" class="app-shell hidden">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-brand">
+          <img src="/assets/logo.svg" alt="" width="32" height="32">
+          <span id="topbar-store-name" class="topbar-store-name">Laundry Bening Harian</span>
+        </div>
+
+        <nav class="nav-tabs" aria-label="Menu kasir">
+          <button type="button" class="nav-tab active" data-tab="orders">Antrean Order</button>
+          <button type="button" class="nav-tab" data-tab="services">Layanan &amp; Tarif</button>
+          <button type="button" class="nav-tab" data-tab="summary">Rekap Kas</button>
+        </nav>
+
+        <div class="topbar-actions">
+          <button id="new-order-btn" type="button" class="btn btn-primary">+ Order Baru</button>
+          <button id="logout-btn" type="button" class="btn">Keluar</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-container">
+      <!-- Tab 1: Antrean Order -->
+      <section id="tab-orders" aria-label="Antrean Order">
+        <div class="kpi-grid" aria-label="Ringkasan antrean">
+          <div class="kpi-cell">
+            <span class="kpi-label">Antrean Aktif</span>
+            <strong id="kpi-active" class="kpi-value">0</strong>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Siap Diambil</span>
+            <strong id="kpi-ready" class="kpi-value kpi-value-brand">0</strong>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Melewati Janji</span>
+            <strong id="kpi-overdue" class="kpi-value kpi-value-alert">0</strong>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Kas Masuk Hari Ini</span>
+            <strong id="kpi-cash" class="kpi-value">Rp 0</strong>
+          </div>
+        </div>
+
+        <div class="workspace-split">
+          <!-- Left Queue Panel -->
+          <section class="panel" aria-label="Daftar antrean nota">
+            <div class="queue-controls">
+              <div class="field">
+                <label for="order-search" class="field-label">Cari Nota</label>
+                <input
+                  id="order-search"
+                  type="search"
+                  class="input"
+                  placeholder="Cari kode nota, nama, atau HP"
+                  autocomplete="off"
+                >
+              </div>
+              <div id="filter-chips" class="chip-row" role="group" aria-label="Filter antrean">
+                <button type="button" class="chip active" data-filter="ALL">Semua</button>
+                <button type="button" class="chip" data-filter="DITERIMA">Diterima</button>
+                <button type="button" class="chip" data-filter="DICUCI">Dicuci</button>
+                <button type="button" class="chip" data-filter="DISETRIKA">Disetrika</button>
+                <button type="button" class="chip" data-filter="SIAP_AMBIL">Siap Ambil</button>
+                <button type="button" class="chip" data-filter="DIAMBIL">Diambil</button>
+                <button type="button" class="chip" data-filter="OVERDUE">Terlambat</button>
+                <button type="button" class="chip" data-filter="UNPAID">Belum Lunas</button>
+              </div>
+            </div>
+
+            <div id="orders-error" class="banner banner-error hidden" role="alert"></div>
+            <div id="order-list" class="order-list" aria-live="polite"></div>
+          </section>
+
+          <!-- Right Panel: Inspector or New Order Form -->
+          <section class="panel" aria-label="Detail nota atau order baru">
+            <!-- Inspector View -->
+            <div id="inspector-panel">
+              <div class="panel-header">
+                <h2 class="section-title">Detail Nota</h2>
+                <span id="inspector-code-chip" class="mono muted-text hidden"></span>
+              </div>
+              <div id="inspector-empty" class="empty-state">
+                Pilih nota dari daftar antrean untuk melihat detail, memperbarui proses cucian, atau mencatat pembayaran.
+              </div>
+              <div id="inspector-content" class="panel-body hidden"></div>
+            </div>
+
+            <!-- New Order Drawer / Panel -->
+            <div id="new-order-panel" class="hidden">
+              <div class="panel-header">
+                <h2 class="section-title">Buat Order Baru</h2>
+                <button id="cancel-new-order-btn" type="button" class="btn btn-sm">Tutup</button>
+              </div>
+
+              <form id="new-order-form" class="panel-body" novalidate>
+                <div id="new-order-error" class="banner banner-error hidden" role="alert"></div>
+
+                <div class="form-grid-2">
+                  <div class="field">
+                    <label for="new-customer-name" class="field-label">Nama Pelanggan</label>
+                    <input id="new-customer-name" type="text" class="input" maxlength="80" placeholder="Contoh: Ibu Rina" required>
+                  </div>
+                  <div class="field">
+                    <label for="new-customer-phone" class="field-label">No. HP / WhatsApp</label>
+                    <input id="new-customer-phone" type="tel" inputmode="tel" class="input" maxlength="16" placeholder="08xxxxxxxxxx" required>
+                  </div>
+                </div>
+
+                <div class="form-grid-2">
+                  <div class="field">
+                    <label for="new-rack-code" class="field-label">Kode Rak (opsional)</label>
+                    <input id="new-rack-code" type="text" class="input" maxlength="20" placeholder="Contoh: A-02">
+                  </div>
+                  <div class="field">
+                    <label for="new-internal-note" class="field-label">Catatan Internal (opsional)</label>
+                    <input id="new-internal-note" type="text" class="input" maxlength="300" placeholder="Pisah warna, pewangi lembut">
+                  </div>
+                </div>
+
+                <div class="inspector-section">
+                  <div class="order-row-top">
+                    <span class="field-label">Item Layanan</span>
+                    <button id="add-item-row-btn" type="button" class="btn btn-sm">+ Tambah Layanan</button>
+                  </div>
+                  <div id="new-order-items" class="item-rows"></div>
+                  <div class="total-strip">
+                    <span>Total Tagihan</span>
+                    <span id="new-order-total" class="tabular">Rp 0</span>
+                  </div>
+                </div>
+
+                <div class="inspector-section">
+                  <span class="field-label">Pembayaran Awal</span>
+                  <div class="form-grid-2">
+                    <div class="field">
+                      <label for="new-pay-kind" class="field-label">Jenis Bayar</label>
+                      <select id="new-pay-kind" class="select">
+                        <option value="NONE">Bayar Nanti (Belum Bayar)</option>
+                        <option value="DP">DP (Uang Muka)</option>
+                        <option value="LUNAS">Lunas Sekarang</option>
+                      </select>
+                    </div>
+                    <div id="new-pay-method-wrap" class="field hidden">
+                      <label for="new-pay-method" class="field-label">Metode</label>
+                      <select id="new-pay-method" class="select">
+                        <option value="TUNAI">TUNAI</option>
+                        <option value="QRIS">QRIS</option>
+                        <option value="TRANSFER">TRANSFER</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="new-pay-dp-wrap" class="field hidden">
+                    <label for="new-pay-amount" class="field-label">Nominal DP (Rp)</label>
+                    <input id="new-pay-amount" type="number" inputmode="numeric" min="1000" step="500" class="input tabular" placeholder="10000">
+                  </div>
+                </div>
+
+                <button id="submit-new-order-btn" type="submit" class="btn btn-primary">Simpan Order &amp; Buat Nota</button>
+              </form>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- Tab 2: Layanan & Tarif -->
+      <section id="tab-services" class="hidden" aria-label="Layanan dan Tarif">
+        <div class="two-col-admin">
+          <section class="panel">
+            <div class="panel-header">
+              <h2 class="section-title">Daftar Layanan &amp; Tarif</h2>
+            </div>
+            <div id="services-error" class="banner banner-error hidden" role="alert"></div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Layanan</th>
+                    <th>Satuan</th>
+                    <th class="num">Tarif</th>
+                    <th class="num">Estimasi</th>
+                    <th>Status</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="services-tbody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2 class="section-title">Tambah Layanan Baru</h2>
+            </div>
+            <form id="new-service-form" class="panel-body" novalidate>
+              <div id="new-service-error" class="banner banner-error hidden" role="alert"></div>
+
+              <div class="field">
+                <label for="svc-name" class="field-label">Nama Layanan</label>
+                <input id="svc-name" type="text" class="input" maxlength="80" placeholder="Contoh: Cuci Bedcover" required>
+              </div>
+
+              <div class="form-grid-2">
+                <div class="field">
+                  <label for="svc-unit" class="field-label">Satuan</label>
+                  <select id="svc-unit" class="select">
+                    <option value="KG">KG (Kilogram)</option>
+                    <option value="PCS">PCS (Satuan)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="svc-duration" class="field-label">Estimasi (Jam)</label>
+                  <input id="svc-duration" type="number" inputmode="numeric" min="1" max="720" step="1" class="input tabular" value="24" required>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="svc-price" class="field-label">Tarif (Rp)</label>
+                <input id="svc-price" type="number" inputmode="numeric" min="500" step="500" class="input tabular" placeholder="8000" required>
+              </div>
+
+              <button id="submit-service-btn" type="submit" class="btn btn-primary">Tambah Layanan</button>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <!-- Tab 3: Rekap Kas -->
+      <section id="tab-summary" class="hidden" aria-label="Rekap Kas">
+        <section class="panel">
+          <div class="panel-header">
+            <h2 class="section-title">Rekap Kas Harian</h2>
+            <div class="inline-row">
+              <label for="rekap-date" class="field-label">Tanggal (WIB)</label>
+              <input id="rekap-date" type="date" class="input tabular">
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="rekap-error" class="banner banner-error hidden" role="alert"></div>
+
+            <div class="rekap-grid">
+              <div class="stat-box">
+                <span class="kpi-label">Total Kas Masuk</span>
+                <strong id="rekap-cash-total" class="kpi-value kpi-value-brand">Rp 0</strong>
+              </div>
+              <div class="stat-box">
+                <span class="kpi-label">Order Baru (Tanggal Ini)</span>
+                <strong id="rekap-new-orders" class="kpi-value">0</strong>
+              </div>
+              <div class="stat-box">
+                <span class="kpi-label">Piutang Belum Lunas (Aktif)</span>
+                <strong id="rekap-unpaid-total" class="kpi-value kpi-value-alert">Rp 0</strong>
+                <span id="rekap-unpaid-count" class="muted-text tabular">0 nota belum lunas</span>
+              </div>
+            </div>
+
+            <div class="inspector-section">
+              <h3 class="section-title">Rincian Metode Pembayaran</h3>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Metode</th>
+                      <th class="num">Total Masuk</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Tunai (Cash)</td>
+                      <td id="rekap-tunai" class="num">Rp 0</td>
+                    </tr>
+                    <tr>
+                      <td>QRIS</td>
+                      <td id="rekap-qris" class="num">Rp 0</td>
+                    </tr>
+                    <tr>
+                      <td>Transfer Bank</td>
+                      <td id="rekap-transfer" class="num">Rp 0</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/kasir.js"></script>
+</body>
+</html>
