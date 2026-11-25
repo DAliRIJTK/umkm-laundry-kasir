@@ -182,6 +182,10 @@ function applyStoreMeta(meta) {
   dom.loginStoreName.textContent = name;
   dom.topbarStoreName.textContent = name;
   document.title = `Kasir — ${name}`;
+  const demoHint = document.getElementById('demo-pin-hint');
+  if (demoHint) {
+    demoHint.classList.toggle('hidden', !meta.isDemoPin);
+  }
 }
 
 function setAuthenticated(isAuth, loginMessage = '') {
@@ -949,20 +953,24 @@ function updateNewOrderPreview({ syncErrorBanner = true } = {}) {
   let total = 0;
   let maxHours = 1;
   let firstError = '';
-  let kgCount = 0;
-  let pcsCount = 0;
+  let kgTotalTenths = 0;
+  let pcsTotal = 0;
 
   for (const row of rows) {
     const check = validateOrderRow(row);
     if (check.svc) {
       maxHours = Math.max(maxHours, Number(check.svc.durationHours || 1));
-      if (check.svc.unit === 'KG') kgCount += 1;
-      else pcsCount += 1;
     }
     if (!check.valid) {
       if (!firstError) firstError = check.error;
     } else {
       total += check.subtotal;
+      const numQty = Number(String(row.qty ?? '').trim().replace(',', '.'));
+      if (check.svc.unit === 'KG') {
+        kgTotalTenths += Math.round(numQty * 10);
+      } else {
+        pcsTotal += Math.round(numQty);
+      }
     }
   }
 
@@ -971,8 +979,13 @@ function updateNewOrderPreview({ syncErrorBanner = true } = {}) {
   }
 
   const unitParts = [];
-  if (kgCount > 0) unitParts.push(`${kgCount} KG`);
-  if (pcsCount > 0) unitParts.push(`${pcsCount} PCS`);
+  if (kgTotalTenths > 0) {
+    const kgStr = kgTotalTenths % 10 === 0 ? String(kgTotalTenths / 10) : (kgTotalTenths / 10).toFixed(1);
+    unitParts.push(`${kgStr} KG`);
+  }
+  if (pcsTotal > 0) {
+    unitParts.push(`${pcsTotal} PCS`);
+  }
   dom.previewItemCount.textContent =
     unitParts.length > 0 ? `${rows.length} layanan (${unitParts.join(', ')})` : `${rows.length} layanan`;
 
@@ -1202,7 +1215,7 @@ function renderServicesTable() {
         el('td', { className: 'num' }, priceInput),
         el('td', { className: 'num' }, durationInput),
         el('td', {}, statusBadge),
-        el('td', {}, el('div', { className: 'inline-row' }, saveEditBtn, cancelEditBtn))
+        el('td', {}, el('div', { className: 'table-actions-nowrap' }, saveEditBtn, cancelEditBtn))
       );
     }
 
@@ -1255,7 +1268,7 @@ function renderServicesTable() {
       el('td', { className: 'num' }, formatRupiah(svc.priceIdr)),
       el('td', { className: 'num' }, `${svc.durationHours} jam`),
       el('td', {}, statusBadge),
-      el('td', {}, el('div', { className: 'inline-row' }, editBtn, toggleBtn))
+      el('td', {}, el('div', { className: 'table-actions-nowrap' }, editBtn, toggleBtn))
     );
   });
 

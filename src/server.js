@@ -31,7 +31,7 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'same-origin',
   'Content-Security-Policy':
-    "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'",
+    "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
 };
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
@@ -103,15 +103,48 @@ export function createApp({ dbPath, pin, seedDemo = true } = {}) {
   const db = openDatabase({ dbPath, pin, seedDemo });
   const store = createStore(db);
   const limiter = createLoginRateLimiter({ maxAttempts: 5, windowMs: 10 * 60 * 1000 });
+  const trackLimiter = createLoginRateLimiter({ maxAttempts: 15, windowMs: 10 * 60 * 1000 });
+  const isDemoPin = !pin && !process.env.LAUNDRY_PIN;
 
   function getClientIp(req) {
     return req.socket?.remoteAddress || 'unknown';
   }
 
+  function isSecureRequest(req) {
+    return Boolean(req.socket?.encrypted || req.headers['x-forwarded-proto'] === 'https');
+  }
+
+  function validateMutationOriginAndType(req, res) {
+    const fetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+    if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+      sendJson(res, 403, { error: 'Permintaan lintas situs ditolak.' });
+      return false;
+    }
+    const origin = req.headers.origin;
+    if (origin && req.headers.host) {
+      try {
+        if (new URL(origin).host !== req.headers.host) {
+          sendJson(res, 403, { error: 'Origin permintaan tidak cocok.' });
+          return false;
+        }
+      } catch {
+        sendJson(res, 403, { error: 'Origin permintaan tidak valid.' });
+        return false;
+      }
+    }
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    if (!contentType.startsWith('application/json')) {
+      sendJson(res, 415, { error: 'Content-Type harus application/json.' });
+      return false;
+    }
+    return true;
+  }
+
   function isAuthenticated(req) {
     const cookies = parseCookies(req.headers.cookie);
-    const { sessionSecret } = store.getAuthCredentials();
-    return Boolean(verifySessionToken(cookies[SESSION_COOKIE_NAME], sessionSecret));
+    const { sessionSecret, sessionVersion } = store.getAuthCredentials();
+    const claims = verifySessionToken(cookies[SESSION_COOKIE_NAME], sessionSecret);
+    return Boolean(claims && claims.ver === sessionVersion);
   }
 
   function requireAuth(req, res) {
@@ -143,7 +176,11 @@ export function createApp({ dbPath, pin, seedDemo = true } = {}) {
       }
 
       if (method === 'GET' && pathname === '/api/auth/session') {
-        sendJson(res, 200, { authenticated: isAuthenticated(req), ...store.getStoreMeta() });
+        sendJson(res, 200, { authenticated: isAuthenticated(req), isDemoPin, ...store.getStoreMeta() });
+        return;
+      }
+
+      if ((method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE') && !validateMutationOriginAndType(req, res)) {
         return;
       }
 
@@ -156,34 +193,39 @@ export function createApp({ dbPath, pin, seedDemo = true } = {}) {
           return;
         }
         const body = await readJsonBody(req);
-        const { pinSalt, pinHash, sessionSecret } = store.getAuthCredentials();
+        const { pinSalt, pinHash, sessionSecret, sessionVersion } = store.getAuthCredentials();
         if (!verifyPin(body.pin, pinSalt, pinHash)) {
           limiter.recordFailure(ip);
           sendJson(res, 401, { error: 'PIN toko salah.' });
           return;
         }
         limiter.recordSuccess(ip);
-        const token = signSessionToken({ role: 'kasir' }, sessionSecret);
+        const token = signSessionToken({ role: 'kasir', ver: sessionVersion }, sessionSecret);
+        const secureAttr = isSecureRequest(req) ? '; Secure' : '';
         sendJson(
           res,
           200,
-          { ok: true, ...store.getStoreMeta() },
+          { ok: true, isDemoPin, ...store.getStoreMeta() },
           {
             'Set-Cookie': `${SESSION_COOKIE_NAME}=${encodeURIComponent(
               token
-            )}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`,
+            )}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secureAttr}`,
           }
         );
         return;
       }
 
       if (method === 'POST' && pathname === '/api/auth/logout') {
+        if (isAuthenticated(req)) {
+          store.bumpSessionVersion();
+        }
+        const secureAttr = isSecureRequest(req) ? '; Secure' : '';
         sendJson(
           res,
           200,
           { ok: true },
           {
-            'Set-Cookie': `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+            'Set-Cookie': `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureAttr}`,
           }
         );
         return;
@@ -192,8 +234,23 @@ export function createApp({ dbPath, pin, seedDemo = true } = {}) {
       if (method === 'GET' && pathname === '/api/public/track') {
         const code = parsed.searchParams.get('code') || '';
         const phone4 = parsed.searchParams.get('phone4') || '';
-        const order = store.lookupPublicOrder(code, phone4);
-        sendJson(res, 200, { order });
+        const trackKey = `${getClientIp(req)}:${code.trim().toUpperCase()}`;
+        if (trackLimiter.isBlocked(trackKey)) {
+          sendJson(res, 429, {
+            error: 'Terlalu banyak percobaan cek nota untuk kode ini. Coba lagi nanti.',
+          });
+          return;
+        }
+        try {
+          const order = store.lookupPublicOrder(code, phone4);
+          trackLimiter.recordSuccess(trackKey);
+          sendJson(res, 200, { order });
+        } catch (err) {
+          if (err instanceof DomainError && err.statusCode === 404) {
+            trackLimiter.recordFailure(trackKey);
+          }
+          throw err;
+        }
         return;
       }
 

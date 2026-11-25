@@ -117,10 +117,10 @@ export function derivePaymentStatus(paidIdr, totalIdr) {
   return 'LUNAS';
 }
 
-export function formatOrderCode(jakartaDate, seq) {
+export function formatOrderCode(jakartaDate, seq, suffix = '') {
   const compactDate = String(jakartaDate).replaceAll('-', '');
   const padded = String(seq).padStart(3, '0');
-  return `LND-${compactDate}-${padded}`;
+  return suffix ? `LND-${compactDate}-${padded}-${suffix}` : `LND-${compactDate}-${padded}`;
 }
 
 export function parsePositiveIntIdr(value, fieldLabel = 'Nominal') {

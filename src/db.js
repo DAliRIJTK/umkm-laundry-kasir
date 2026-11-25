@@ -90,8 +90,13 @@ export function openDatabase({ dbPath, pin, seedDemo = true } = {}) {
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO NOTHING`
   );
+  const setSetting = db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  );
 
-  const initialPin = pin || process.env.LAUNDRY_PIN || '123456';
+  const explicitPin = pin || process.env.LAUNDRY_PIN;
+  const initialPin = explicitPin || '123456';
   const { salt, hash } = hashPin(initialPin);
   const sessionSecret = process.env.LAUNDRY_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
@@ -99,9 +104,15 @@ export function openDatabase({ dbPath, pin, seedDemo = true } = {}) {
   upsertSetting.run('store_address', 'Jl. Sukajadi, Bandung', now);
   upsertSetting.run('store_hours', 'Setiap hari 07:00–21:00 WIB', now);
   upsertSetting.run('store_phone', '0812-0000-0100', now);
-  upsertSetting.run('pin_salt', salt, now);
-  upsertSetting.run('pin_hash', hash, now);
+  if (explicitPin) {
+    setSetting.run('pin_salt', salt, now);
+    setSetting.run('pin_hash', hash, now);
+  } else {
+    upsertSetting.run('pin_salt', salt, now);
+    upsertSetting.run('pin_hash', hash, now);
+  }
   upsertSetting.run('session_secret', sessionSecret, now);
+  upsertSetting.run('session_version', '1', now);
 
   const svcCount = db.prepare('SELECT COUNT(*) AS c FROM services').get().c;
   if (svcCount === 0) {

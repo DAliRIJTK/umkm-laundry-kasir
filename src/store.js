@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   DomainError,
   ORDER_STATUSES,
@@ -51,7 +52,17 @@ export function createStore(db) {
       pinSalt: m.pin_salt,
       pinHash: m.pin_hash,
       sessionSecret: m.session_secret,
+      sessionVersion: Number(m.session_version || '1'),
     };
+  }
+
+  function bumpSessionVersion() {
+    const next = getAuthCredentials().sessionVersion + 1;
+    db.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('session_version', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run(String(next), nowJakartaIso());
+    return next;
   }
 
   function mapServiceRow(row) {
@@ -302,10 +313,11 @@ export function createStore(db) {
 
       const prefix = `LND-${today.replaceAll('-', '')}-`;
       const seqRow = db
-        .prepare('SELECT COALESCE(MAX(CAST(substr(order_code, 14) AS INTEGER)), 0) AS max_seq FROM orders WHERE order_code LIKE ?')
+        .prepare('SELECT COALESCE(MAX(CAST(substr(order_code, 14, 3) AS INTEGER)), 0) AS max_seq FROM orders WHERE order_code LIKE ?')
         .get(`${prefix}%`);
       const nextSeq = Number(seqRow.max_seq) + 1;
-      const orderCode = formatOrderCode(today, nextSeq);
+      const randomSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+      const orderCode = formatOrderCode(today, nextSeq, randomSuffix);
 
       const res = db
         .prepare(
@@ -542,6 +554,7 @@ export function createStore(db) {
   return {
     getStoreMeta,
     getAuthCredentials,
+    bumpSessionVersion,
     listServices,
     createService,
     updateService,
