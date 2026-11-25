@@ -64,7 +64,12 @@ function readJsonBody(req, maxBytes = 64 * 1024) {
         return;
       }
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          reject(new DomainError('Payload JSON harus berupa objek.', 400));
+          return;
+        }
+        resolve(parsed);
       } catch {
         reject(new DomainError('Format JSON tidak valid.', 400));
       }

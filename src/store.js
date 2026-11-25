@@ -254,6 +254,14 @@ export function createStore(db) {
       });
     }
 
+    if (
+      input.initialPayment !== undefined &&
+      (typeof input.initialPayment !== 'object' ||
+        input.initialPayment === null ||
+        Array.isArray(input.initialPayment))
+    ) {
+      throw new DomainError('Format pembayaran awal tidak valid.');
+    }
     const initPay = input.initialPayment || { kind: 'NONE' };
     const payKind = String(initPay.kind ?? 'NONE').toUpperCase();
     let paymentToInsert = null;
@@ -284,9 +292,9 @@ export function createStore(db) {
     try {
       const prefix = `LND-${today.replaceAll('-', '')}-`;
       const seqRow = db
-        .prepare('SELECT COUNT(*) AS c FROM orders WHERE order_code LIKE ?')
+        .prepare('SELECT COALESCE(MAX(CAST(substr(order_code, 14) AS INTEGER)), 0) AS max_seq FROM orders WHERE order_code LIKE ?')
         .get(`${prefix}%`);
-      const nextSeq = Number(seqRow.c) + 1;
+      const nextSeq = Number(seqRow.max_seq) + 1;
       const orderCode = formatOrderCode(today, nextSeq);
 
       const res = db
@@ -339,6 +347,9 @@ export function createStore(db) {
     db.exec('BEGIN IMMEDIATE');
     try {
       const order = getOrderById(id);
+      if (order.status === 'DIAMBIL' || order.status === 'DIBATALKAN') {
+        throw new DomainError(`Order berstatus ${order.status} tidak dapat diubah lagi.`, 409);
+      }
       const nextRack = rackCode !== undefined ? String(rackCode).trim().slice(0, 20) : order.rackCode;
 
       if (nextStatus === order.status) {

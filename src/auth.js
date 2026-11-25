@@ -98,6 +98,10 @@ export function createLoginRateLimiter({ maxAttempts = 5, windowMs = 10 * 60 * 1
       return prune(key, nowMs).length >= maxAttempts;
     },
     recordFailure(key, nowMs = Date.now()) {
+      if (attempts.size >= 1000 && !attempts.has(key)) {
+        for (const k of attempts.keys()) prune(k, nowMs);
+        if (attempts.size >= 1000) attempts.clear();
+      }
       const fresh = prune(key, nowMs);
       fresh.push(nowMs);
       attempts.set(key, fresh);
