@@ -1,13 +1,16 @@
-// Pure Vanilla ESM Kasir UI (no raw innerHTML with untrusted data)
-
-const STATUS_META = {
-  DITERIMA: { label: 'Diterima', badgeClass: 'badge-diterima' },
-  DICUCI: { label: 'Dicuci', badgeClass: 'badge-dicuci' },
-  DISETRIKA: { label: 'Disetrika', badgeClass: 'badge-disetrika' },
-  SIAP_AMBIL: { label: 'Siap Ambil', badgeClass: 'badge-siap' },
-  DIAMBIL: { label: 'Diambil', badgeClass: 'badge-diambil' },
-  DIBATALKAN: { label: 'Dibatalkan', badgeClass: 'badge-error' },
-};
+// Pure Vanilla ESM Kasir UI (no raw innerHTML, no inline style)
+import {
+  STATUS_META,
+  el,
+  formatDateTimeWib,
+  formatQty,
+  formatRupiah,
+  makePaymentBadge,
+  makeStatusBadge,
+  renderItemsTableEl,
+  renderPaymentSummaryEl,
+  showBanner,
+} from '/shared.js';
 
 const VALID_TRANSITIONS = {
   DITERIMA: ['DICUCI', 'DISETRIKA'],
@@ -18,81 +21,9 @@ const VALID_TRANSITIONS = {
   DIBATALKAN: [],
 };
 
-const PAYMENT_STATUS_META = {
-  BELUM_BAYAR: { label: 'Belum Bayar', badgeClass: 'badge-warn' },
-  DP: { label: 'DP', badgeClass: 'badge-warn' },
-  LUNAS: { label: 'Lunas', badgeClass: 'badge-lunas' },
-};
-
-const idrFmt = new Intl.NumberFormat('id-ID');
-const dtFmt = new Intl.DateTimeFormat('id-ID', {
-  timeZone: 'Asia/Jakarta',
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-
-function formatRupiah(amount) {
-  return `Rp ${idrFmt.format(Number(amount || 0))}`;
-}
-
-function formatDateTimeWib(iso) {
-  if (!iso) return '-';
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return iso;
-  return `${dtFmt.format(new Date(ms))} WIB`;
-}
-
 function todayJakartaDate() {
   const shifted = new Date(Date.now() + 7 * 3600 * 1000);
   return shifted.toISOString().slice(0, 10);
-}
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === 'className') {
-      node.className = v;
-    } else if (k === 'dataset') {
-      for (const [dk, dv] of Object.entries(v)) {
-        node.dataset[dk] = dv;
-      }
-    } else if (k.startsWith('on') && typeof v === 'function') {
-      node.addEventListener(k.slice(2).toLowerCase(), v);
-    } else if (k === 'disabled' || k === 'required' || k === 'checked' || k === 'selected') {
-      node[k] = Boolean(v);
-    } else {
-      node.setAttribute(k, String(v));
-    }
-  }
-  for (const child of children) {
-    if (child === undefined || child === null || child === false) continue;
-    if (typeof child === 'string' || typeof child === 'number') {
-      node.appendChild(document.createTextNode(String(child)));
-    } else {
-      node.appendChild(child);
-    }
-  }
-  return node;
-}
-
-function showBanner(node, message) {
-  if (!message) {
-    node.textContent = '';
-    node.classList.add('hidden');
-    return;
-  }
-  node.textContent = message;
-  node.classList.remove('hidden');
-}
-
-function formatQty(qty, unit) {
-  const num = Number(qty || 0);
-  const str = Number.isInteger(num) ? String(num) : num.toFixed(1);
-  return `${str} ${unit}`;
 }
 
 function summarizeItems(items) {
@@ -101,16 +32,6 @@ function summarizeItems(items) {
   const base = `${first.serviceName} (${formatQty(first.qty, first.unit)})`;
   if (items.length === 1) return base;
   return `${base}, +${items.length - 1} lainnya`;
-}
-
-function makeStatusBadge(status) {
-  const meta = STATUS_META[status] || { label: status, badgeClass: 'badge-diambil' };
-  return el('span', { className: `badge ${meta.badgeClass}` }, meta.label);
-}
-
-function makePaymentBadge(paymentStatus) {
-  const meta = PAYMENT_STATUS_META[paymentStatus] || { label: paymentStatus, badgeClass: 'badge-warn' };
-  return el('span', { className: `badge ${meta.badgeClass}` }, meta.label);
 }
 
 // Application State
@@ -130,9 +51,13 @@ const state = {
   search: '',
   isNewOrderOpen: false,
   confirmCancelId: null,
+  editingServiceId: null,
   activeServices: [],
   allServices: [],
   newOrderRows: [],
+  ordersRequestSeq: 0,
+  rekapRequestSeq: 0,
+  newOrderOpenSeq: 0,
   searchTimer: null,
   toastTimer: null,
 };
@@ -175,6 +100,11 @@ const dom = {
   newInternalNote: document.getElementById('new-internal-note'),
   addItemRowBtn: document.getElementById('add-item-row-btn'),
   newOrderItems: document.getElementById('new-order-items'),
+  newOrderPreview: document.getElementById('new-order-preview'),
+  previewItemCount: document.getElementById('preview-item-count'),
+  previewDueAt: document.getElementById('preview-due-at'),
+  previewInitialPay: document.getElementById('preview-initial-pay'),
+  previewRemaining: document.getElementById('preview-remaining'),
   newOrderTotal: document.getElementById('new-order-total'),
   newPayKind: document.getElementById('new-pay-kind'),
   newPayMethodWrap: document.getElementById('new-pay-method-wrap'),
@@ -261,6 +191,26 @@ function setAuthenticated(isAuth, loginMessage = '') {
     dom.appView.classList.remove('hidden');
     showBanner(dom.loginError, '');
   } else {
+    clearTimeout(state.searchTimer);
+    state.ordersRequestSeq += 1;
+    state.rekapRequestSeq += 1;
+    state.newOrderOpenSeq += 1;
+    state.orders = [];
+    state.selectedOrderId = null;
+    state.selectedOrder = null;
+    state.filter = 'ALL';
+    state.search = '';
+    state.confirmCancelId = null;
+    state.editingServiceId = null;
+    dom.orderSearch.value = '';
+    for (const chip of dom.filterChips) {
+      chip.classList.toggle('active', chip.dataset.filter === 'ALL');
+    }
+    showBanner(dom.ordersError, '');
+    closeNewOrderDrawer();
+    renderOrderList();
+    renderInspector();
+
     dom.appView.classList.add('hidden');
     dom.loginView.classList.remove('hidden');
     dom.pinInput.value = '';
@@ -289,6 +239,7 @@ function switchTab(tabName) {
 async function loadKpiSummary() {
   try {
     const summary = await apiFetch('/api/summary');
+    if (!state.authenticated) return;
     dom.kpiActive.textContent = String(summary.activeCount ?? 0);
     dom.kpiReady.textContent = String(summary.readyCount ?? 0);
     dom.kpiOverdue.textContent = String(summary.overdueCount ?? 0);
@@ -317,9 +268,12 @@ function buildOrdersQueryUrl() {
 }
 
 async function loadOrders() {
+  const seq = ++state.ordersRequestSeq;
   showBanner(dom.ordersError, '');
   try {
     const data = await apiFetch(buildOrdersQueryUrl());
+    if (seq !== state.ordersRequestSeq || !state.authenticated) return;
+
     state.orders = data.orders || [];
     renderOrderList();
 
@@ -329,23 +283,28 @@ async function loadOrders() {
         state.selectedOrder = match;
         renderInspector();
       } else {
-        // Keep inspector synced even if current filter excludes selected order
-        await refreshSelectedOrder(state.selectedOrderId);
+        await refreshSelectedOrder(state.selectedOrderId, seq);
       }
     }
   } catch (err) {
+    if (seq !== state.ordersRequestSeq) return;
     if (err.status !== 401) {
       showBanner(dom.ordersError, err.message);
     }
   }
 }
 
-async function refreshSelectedOrder(orderId) {
+async function refreshSelectedOrder(orderId, seq = state.ordersRequestSeq) {
   try {
     const data = await apiFetch(`/api/orders/${orderId}`);
+    if (seq !== state.ordersRequestSeq || state.selectedOrderId !== orderId || !state.authenticated) return;
     state.selectedOrder = data.order;
     renderInspector();
-  } catch {
+  } catch (err) {
+    if (seq !== state.ordersRequestSeq || !state.authenticated) return;
+    if (err.status !== 401) {
+      showBanner(dom.ordersError, err.message);
+    }
     state.selectedOrder = null;
     state.selectedOrderId = null;
     renderInspector();
@@ -451,7 +410,7 @@ function buildWhatsAppText(order) {
     `Sisa Bayar: ${formatRupiah(order.remainingIdr)}`,
     `Estimasi Selesai: ${formatDateTimeWib(order.dueAt)}`,
     '',
-    `Cek status cucian kapan saja:`,
+    'Cek status cucian kapan saja:',
     trackUrl
   );
   return lines.join('\n');
@@ -469,11 +428,8 @@ async function copyWhatsAppMessage(order) {
     // Fall through to textarea fallback
   }
 
-  const ta = document.createElement('textarea');
+  const ta = el('textarea', { className: 'sr-only-copy', readonly: '' });
   ta.value = text;
-  ta.setAttribute('readonly', '');
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
   document.body.appendChild(ta);
   ta.select();
   try {
@@ -540,7 +496,7 @@ function renderInspector() {
     metaItems.push(
       el(
         'div',
-        { className: 'meta-item', style: 'grid-column: 1 / -1;' },
+        { className: 'meta-item meta-item-full' },
         el('span', { className: 'meta-label' }, 'Catatan Internal'),
         el('span', { className: 'meta-val' }, order.internalNote)
       )
@@ -548,6 +504,7 @@ function renderInspector() {
   }
 
   // Rack Update Row
+  const isTerminal = order.status === 'DIAMBIL' || order.status === 'DIBATALKAN';
   const rackInput = el('input', {
     type: 'text',
     className: 'input mono',
@@ -555,7 +512,7 @@ function renderInspector() {
     value: order.rackCode || '',
     placeholder: 'Misal: A-02',
     'aria-label': 'Kode rak penyimpanan',
-    disabled: order.status === 'DIAMBIL' || order.status === 'DIBATALKAN',
+    disabled: isTerminal,
   });
 
   const saveRackBtn = el(
@@ -563,7 +520,7 @@ function renderInspector() {
     {
       type: 'button',
       className: 'btn',
-      disabled: order.status === 'DIAMBIL' || order.status === 'DIBATALKAN',
+      disabled: isTerminal,
       onClick: async () => {
         showBanner(inspectorAlert, '');
         saveRackBtn.disabled = true;
@@ -576,9 +533,11 @@ function renderInspector() {
           showToast('Kode rak diperbarui.');
           await refreshOrdersAndKpi();
         } catch (err) {
-          showBanner(inspectorAlert, err.message);
+          if (err.status !== 401) {
+            showBanner(inspectorAlert, err.message);
+          }
         } finally {
-          saveRackBtn.disabled = false;
+          saveRackBtn.disabled = isTerminal;
         }
       },
     },
@@ -587,20 +546,24 @@ function renderInspector() {
 
   // Status Transition Controls
   const nextStatuses = VALID_TRANSITIONS[order.status] || [];
-  const isTerminal = order.status === 'DIAMBIL' || order.status === 'DIBATALKAN';
   const unpaidBlockPickup = order.status === 'SIAP_AMBIL' && order.remainingIdr > 0;
 
-  const statusButtons = nextStatuses.map((nextSt) => {
+  const statusButtons = [];
+  for (const nextSt of nextStatuses) {
     const label = `Ubah ke ${STATUS_META[nextSt]?.label || nextSt}`;
     const isPickup = nextSt === 'DIAMBIL';
-    return el(
+    const initiallyDisabled = isPickup && unpaidBlockPickup;
+    const btn = el(
       'button',
       {
         type: 'button',
         className: 'btn btn-primary',
-        disabled: isPickup && unpaidBlockPickup,
+        disabled: initiallyDisabled,
         onClick: async () => {
           showBanner(inspectorAlert, '');
+          for (const sb of statusButtons) {
+            sb.node.disabled = true;
+          }
           try {
             const res = await apiFetch(`/api/orders/${order.id}/status`, {
               method: 'PATCH',
@@ -611,56 +574,73 @@ function renderInspector() {
             showToast(`Status diperbarui ke ${STATUS_META[nextSt]?.label || nextSt}.`);
             await refreshOrdersAndKpi();
           } catch (err) {
-            showBanner(inspectorAlert, err.message);
+            if (err.status !== 401) {
+              showBanner(inspectorAlert, err.message);
+            }
+          } finally {
+            for (const sb of statusButtons) {
+              sb.node.disabled = sb.initiallyDisabled;
+            }
           }
         },
       },
       label
     );
-  });
+    statusButtons.push({ node: btn, initiallyDisabled });
+  }
 
   let cancelSection = null;
   if (!isTerminal) {
     if (state.confirmCancelId === order.id) {
+      const abortCancelBtn = el(
+        'button',
+        {
+          type: 'button',
+          className: 'btn btn-sm',
+          onClick: () => {
+            state.confirmCancelId = null;
+            renderInspector();
+          },
+        },
+        'Batal'
+      );
+      const confirmCancelBtn = el(
+        'button',
+        {
+          type: 'button',
+          className: 'btn btn-danger btn-sm',
+          onClick: async () => {
+            showBanner(inspectorAlert, '');
+            confirmCancelBtn.disabled = true;
+            abortCancelBtn.disabled = true;
+            try {
+              const res = await apiFetch(`/api/orders/${order.id}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: 'DIBATALKAN', rackCode: rackInput.value }),
+              });
+              state.selectedOrder = res.order;
+              state.confirmCancelId = null;
+              showToast('Nota dibatalkan.');
+              await refreshOrdersAndKpi();
+            } catch (err) {
+              if (err.status !== 401) {
+                showBanner(inspectorAlert, err.message);
+              }
+            } finally {
+              confirmCancelBtn.disabled = false;
+              abortCancelBtn.disabled = false;
+            }
+          },
+        },
+        'Ya, Batalkan'
+      );
+
       cancelSection = el(
         'div',
         { className: 'inline-row' },
         el('span', { className: 'secondary-text' }, 'Batalkan nota ini?'),
-        el(
-          'button',
-          {
-            type: 'button',
-            className: 'btn btn-danger btn-sm',
-            onClick: async () => {
-              showBanner(inspectorAlert, '');
-              try {
-                const res = await apiFetch(`/api/orders/${order.id}/status`, {
-                  method: 'PATCH',
-                  body: JSON.stringify({ status: 'DIBATALKAN', rackCode: rackInput.value }),
-                });
-                state.selectedOrder = res.order;
-                state.confirmCancelId = null;
-                showToast('Nota dibatalkan.');
-                await refreshOrdersAndKpi();
-              } catch (err) {
-                showBanner(inspectorAlert, err.message);
-              }
-            },
-          },
-          'Ya, Batalkan'
-        ),
-        el(
-          'button',
-          {
-            type: 'button',
-            className: 'btn btn-sm',
-            onClick: () => {
-              state.confirmCancelId = null;
-              renderInspector();
-            },
-          },
-          'Batal'
-        )
+        confirmCancelBtn,
+        abortCancelBtn
       );
     } else {
       cancelSection = el(
@@ -677,17 +657,6 @@ function renderInspector() {
       );
     }
   }
-
-  // Line Items Table
-  const itemRows = order.items.map((it) =>
-    el(
-      'tr',
-      {},
-      el('td', {}, it.serviceName),
-      el('td', { className: 'num' }, formatQty(it.qty, it.unit)),
-      el('td', { className: 'num' }, formatRupiah(it.subtotalIdr))
-    )
-  );
 
   // Payment Section
   let paymentSection = null;
@@ -739,7 +708,9 @@ function renderInspector() {
             showToast('Pembayaran berhasil dicatat.');
             await refreshOrdersAndKpi();
           } catch (err) {
-            showBanner(inspectorAlert, err.message);
+            if (err.status !== 401) {
+              showBanner(inspectorAlert, err.message);
+            }
           } finally {
             payBtn.disabled = false;
           }
@@ -809,7 +780,7 @@ function renderInspector() {
       el(
         'div',
         { className: 'inline-row' },
-        el('div', { style: 'flex: 1 1 160px;' }, rackInput),
+        el('div', { className: 'flex-grow-field' }, rackInput),
         saveRackBtn
       ),
       unpaidBlockPickup
@@ -820,7 +791,7 @@ function renderInspector() {
           )
         : null,
       !isTerminal
-        ? el('div', { className: 'inline-row' }, ...statusButtons, cancelSection)
+        ? el('div', { className: 'inline-row' }, ...statusButtons.map((sb) => sb.node), cancelSection)
         : el(
             'p',
             { className: 'muted-text' },
@@ -833,27 +804,8 @@ function renderInspector() {
       'div',
       { className: 'inspector-section' },
       el('span', { className: 'field-label' }, 'Rincian Layanan'),
-      el(
-        'div',
-        { className: 'table-wrap' },
-        el(
-          'table',
-          { className: 'data-table' },
-          el(
-            'thead',
-            {},
-            el('tr', {}, el('th', {}, 'Layanan'), el('th', { className: 'num' }, 'Qty'), el('th', { className: 'num' }, 'Subtotal'))
-          ),
-          el('tbody', {}, ...itemRows)
-        )
-      ),
-      el(
-        'div',
-        { className: 'summary-rows' },
-        el('div', { className: 'summary-line' }, el('span', {}, 'Total Tagihan'), el('strong', {}, formatRupiah(order.totalIdr))),
-        el('div', { className: 'summary-line' }, el('span', {}, 'Sudah Dibayar'), el('span', {}, formatRupiah(order.paidIdr))),
-        el('div', { className: 'summary-line strong' }, el('span', {}, 'Sisa Bayar'), el('span', {}, formatRupiah(order.remainingIdr)))
-      )
+      renderItemsTableEl(order.items),
+      renderPaymentSummaryEl(order)
     ),
     paymentSection,
     paymentHistoryEl,
@@ -891,17 +843,9 @@ function renderInspector() {
 
 // New Order Drawer Logic
 async function openNewOrderDrawer() {
+  const openSeq = ++state.newOrderOpenSeq;
   switchTab('orders');
   showBanner(dom.newOrderError, '');
-
-  try {
-    const data = await apiFetch('/api/services?activeOnly=1');
-    state.activeServices = data.services || [];
-  } catch (err) {
-    if (err.status !== 401) {
-      showBanner(dom.newOrderError, err.message);
-    }
-  }
 
   state.isNewOrderOpen = true;
   dom.inspectorPanel.classList.add('hidden');
@@ -910,6 +854,21 @@ async function openNewOrderDrawer() {
   dom.newOrderForm.reset();
   dom.newPayMethodWrap.classList.add('hidden');
   dom.newPayDpWrap.classList.add('hidden');
+  state.newOrderRows = [];
+  dom.newOrderItems.replaceChildren(el('div', { className: 'muted-text' }, 'Memuat layanan aktif...'));
+  updateNewOrderPreview();
+
+  try {
+    const data = await apiFetch('/api/services?activeOnly=1');
+    if (openSeq !== state.newOrderOpenSeq || !state.isNewOrderOpen || !state.authenticated) return;
+    state.activeServices = data.services || [];
+  } catch (err) {
+    if (openSeq !== state.newOrderOpenSeq || !state.isNewOrderOpen) return;
+    if (err.status !== 401) {
+      showBanner(dom.newOrderError, err.message);
+    }
+    state.activeServices = [];
+  }
 
   const firstSvc = state.activeServices[0];
   state.newOrderRows = firstSvc
@@ -925,18 +884,124 @@ function closeNewOrderDrawer() {
   dom.inspectorPanel.classList.remove('hidden');
 }
 
-function computeRowSubtotal(row) {
+function validateOrderRow(row) {
   const svc = state.activeServices.find((s) => s.id === Number(row.serviceId));
-  if (!svc) return 0;
-  const num = Number(String(row.qty ?? '').replace(',', '.'));
-  if (!Number.isFinite(num) || num <= 0) return 0;
-  const tenths = Math.round(num * 10);
-  return Math.round((tenths * svc.priceIdr) / 10);
+  if (!svc) {
+    return { valid: false, error: 'Layanan belum dipilih.', subtotal: 0, svc: null };
+  }
+  const str = String(row.qty ?? '').trim().replace(',', '.');
+  if (!/^-?\d+(\.\d+)?$/.test(str)) {
+    return { valid: false, error: `${svc.name}: jumlah/berat harus berupa angka.`, subtotal: 0, svc };
+  }
+  const num = Number(str);
+  if (!Number.isFinite(num) || num <= 0) {
+    return { valid: false, error: `${svc.name}: jumlah/berat harus lebih dari 0.`, subtotal: 0, svc };
+  }
+  const scaled = num * 10;
+  const tenths = Math.round(scaled);
+  if (Math.abs(scaled - tenths) > 1e-6) {
+    return {
+      valid: false,
+      error: `${svc.name}: berat maksimal 1 angka di belakang koma (contoh: 2.5).`,
+      subtotal: 0,
+      svc,
+    };
+  }
+  if (svc.unit === 'PCS' && tenths % 10 !== 0) {
+    return {
+      valid: false,
+      error: `${svc.name}: kuantitas satuan PCS harus bilangan bulat.`,
+      subtotal: 0,
+      svc,
+    };
+  }
+  if (tenths > 10_000) {
+    return {
+      valid: false,
+      error: `${svc.name}: kuantitas per item maksimal 1000.`,
+      subtotal: 0,
+      svc,
+    };
+  }
+  const subtotal = Math.round((tenths * svc.priceIdr) / 10);
+  if (subtotal <= 0) {
+    return { valid: false, error: `${svc.name}: subtotal harus lebih dari Rp 0.`, subtotal: 0, svc };
+  }
+  return { valid: true, error: '', subtotal, svc };
 }
 
-function updateNewOrderTotal() {
-  const total = state.newOrderRows.reduce((sum, r) => sum + computeRowSubtotal(r), 0);
-  dom.newOrderTotal.textContent = formatRupiah(total);
+function computeRowSubtotal(row) {
+  const result = validateOrderRow(row);
+  return result.valid ? result.subtotal : null;
+}
+
+function updateNewOrderPreview({ syncErrorBanner = true } = {}) {
+  const rows = state.newOrderRows;
+  if (rows.length === 0 || state.activeServices.length === 0) {
+    dom.previewItemCount.textContent = '0 item';
+    dom.previewDueAt.textContent = '-';
+    dom.previewInitialPay.textContent = 'Belum Bayar (Rp 0)';
+    dom.previewRemaining.textContent = formatRupiah(0);
+    dom.newOrderTotal.textContent = formatRupiah(0);
+    return { valid: false, total: 0, firstError: '' };
+  }
+
+  let total = 0;
+  let maxHours = 1;
+  let firstError = '';
+  let kgCount = 0;
+  let pcsCount = 0;
+
+  for (const row of rows) {
+    const check = validateOrderRow(row);
+    if (check.svc) {
+      maxHours = Math.max(maxHours, Number(check.svc.durationHours || 1));
+      if (check.svc.unit === 'KG') kgCount += 1;
+      else pcsCount += 1;
+    }
+    if (!check.valid) {
+      if (!firstError) firstError = check.error;
+    } else {
+      total += check.subtotal;
+    }
+  }
+
+  if (syncErrorBanner) {
+    showBanner(dom.newOrderError, firstError);
+  }
+
+  const unitParts = [];
+  if (kgCount > 0) unitParts.push(`${kgCount} KG`);
+  if (pcsCount > 0) unitParts.push(`${pcsCount} PCS`);
+  dom.previewItemCount.textContent =
+    unitParts.length > 0 ? `${rows.length} layanan (${unitParts.join(', ')})` : `${rows.length} layanan`;
+
+  const estDueIso = new Date(Date.now() + maxHours * 3600 * 1000).toISOString();
+  dom.previewDueAt.textContent = `${formatDateTimeWib(estDueIso)} (${maxHours} jam)`;
+
+  if (firstError) {
+    dom.newOrderTotal.textContent = 'Periksa qty';
+    dom.previewRemaining.textContent = '-';
+  } else {
+    dom.newOrderTotal.textContent = formatRupiah(total);
+  }
+
+  const payKind = dom.newPayKind.value;
+  if (payKind === 'LUNAS') {
+    const paid = firstError ? 0 : total;
+    dom.previewInitialPay.textContent = firstError ? 'Lunas (-)' : `Lunas (${formatRupiah(paid)})`;
+    dom.previewRemaining.textContent = firstError ? '-' : formatRupiah(0);
+  } else if (payKind === 'DP') {
+    const dpRaw = Number(dom.newPayAmount.value || 0);
+    const dp = Number.isFinite(dpRaw) && dpRaw > 0 ? Math.round(dpRaw) : 0;
+    dom.previewInitialPay.textContent = `DP (${formatRupiah(dp)})`;
+    dom.previewRemaining.textContent = firstError ? '-' : formatRupiah(Math.max(0, total - dp));
+  } else {
+    dom.previewInitialPay.textContent = 'Belum Bayar (Rp 0)';
+    dom.previewRemaining.textContent = firstError ? '-' : formatRupiah(total);
+  }
+
+  return { valid: !firstError, total, firstError };
 }
 
 function renderNewOrderRows() {
@@ -944,7 +1009,7 @@ function renderNewOrderRows() {
     dom.newOrderItems.replaceChildren(
       el('div', { className: 'banner banner-warn' }, 'Belum ada layanan aktif. Aktifkan layanan terlebih dahulu di tab Layanan & Tarif.')
     );
-    updateNewOrderTotal();
+    updateNewOrderPreview({ syncErrorBanner: false });
     return;
   }
 
@@ -977,20 +1042,27 @@ function renderNewOrderRows() {
       )
     );
 
-    const subtotalEl = el('span', { className: 'item-row-subtotal' }, formatRupiah(computeRowSubtotal(row)));
+    const initialSub = computeRowSubtotal(row);
+    const subtotalEl = el(
+      'span',
+      { className: 'item-row-subtotal' },
+      initialSub === null ? 'Tidak valid' : formatRupiah(initialSub)
+    );
 
     const qtyInput = el('input', {
       type: 'number',
       inputmode: svc.unit === 'KG' ? 'decimal' : 'numeric',
       step: svc.unit === 'KG' ? '0.1' : '1',
       min: svc.unit === 'KG' ? '0.1' : '1',
-      className: 'input tabular',
+      className: `input tabular${initialSub === null ? ' input-invalid' : ''}`,
       value: String(row.qty),
       'aria-label': `Jumlah ${svc.unit}`,
       onInput: (e) => {
         row.qty = e.target.value;
-        subtotalEl.textContent = formatRupiah(computeRowSubtotal(row));
-        updateNewOrderTotal();
+        const sub = computeRowSubtotal(row);
+        qtyInput.classList.toggle('input-invalid', sub === null);
+        subtotalEl.textContent = sub === null ? 'Tidak valid' : formatRupiah(sub);
+        updateNewOrderPreview();
       },
     });
 
@@ -1013,7 +1085,7 @@ function renderNewOrderRows() {
   });
 
   dom.newOrderItems.replaceChildren(...rowNodes);
-  updateNewOrderTotal();
+  updateNewOrderPreview();
 }
 
 // Services Tab
@@ -1021,6 +1093,7 @@ async function loadServicesList() {
   showBanner(dom.servicesError, '');
   try {
     const data = await apiFetch('/api/services');
+    if (!state.authenticated) return;
     state.allServices = data.services || [];
     renderServicesTable();
   } catch (err) {
@@ -1038,56 +1111,166 @@ function renderServicesTable() {
     return;
   }
 
-  const rows = state.allServices.map((svc) =>
-    el(
+  const rows = state.allServices.map((svc) => {
+    const statusBadge = el(
+      'span',
+      { className: `badge ${svc.isActive ? 'badge-siap' : 'badge-diambil'}` },
+      svc.isActive ? 'Aktif' : 'Nonaktif'
+    );
+
+    if (state.editingServiceId === svc.id) {
+      const nameInput = el('input', {
+        type: 'text',
+        className: 'input input-sm',
+        maxlength: '80',
+        value: svc.name,
+        'aria-label': 'Nama layanan',
+      });
+      const priceInput = el('input', {
+        type: 'number',
+        inputmode: 'numeric',
+        min: '500',
+        step: '500',
+        className: 'input input-sm tabular',
+        value: String(svc.priceIdr),
+        'aria-label': 'Tarif layanan',
+      });
+      const durationInput = el('input', {
+        type: 'number',
+        inputmode: 'numeric',
+        min: '1',
+        max: '720',
+        step: '1',
+        className: 'input input-sm tabular',
+        value: String(svc.durationHours),
+        'aria-label': 'Estimasi jam',
+      });
+
+      const cancelEditBtn = el(
+        'button',
+        {
+          type: 'button',
+          className: 'btn btn-sm',
+          onClick: () => {
+            state.editingServiceId = null;
+            showBanner(dom.servicesError, '');
+            renderServicesTable();
+          },
+        },
+        'Batal'
+      );
+
+      const saveEditBtn = el(
+        'button',
+        {
+          type: 'button',
+          className: 'btn btn-primary btn-sm',
+          onClick: async () => {
+            showBanner(dom.servicesError, '');
+            saveEditBtn.disabled = true;
+            cancelEditBtn.disabled = true;
+            try {
+              await apiFetch(`/api/services/${svc.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  name: nameInput.value.trim(),
+                  priceIdr: Number(priceInput.value),
+                  durationHours: Number(durationInput.value),
+                }),
+              });
+              state.editingServiceId = null;
+              showToast('Layanan berhasil diperbarui.');
+              await loadServicesList();
+            } catch (err) {
+              if (err.status !== 401) {
+                showBanner(dom.servicesError, err.message);
+              }
+            } finally {
+              saveEditBtn.disabled = false;
+              cancelEditBtn.disabled = false;
+            }
+          },
+        },
+        'Simpan'
+      );
+
+      return el(
+        'tr',
+        {},
+        el('td', {}, nameInput),
+        el('td', {}, svc.unit),
+        el('td', { className: 'num' }, priceInput),
+        el('td', { className: 'num' }, durationInput),
+        el('td', {}, statusBadge),
+        el('td', {}, el('div', { className: 'inline-row' }, saveEditBtn, cancelEditBtn))
+      );
+    }
+
+    const editBtn = el(
+      'button',
+      {
+        type: 'button',
+        className: 'btn btn-sm',
+        onClick: () => {
+          state.editingServiceId = svc.id;
+          showBanner(dom.servicesError, '');
+          renderServicesTable();
+        },
+      },
+      'Edit'
+    );
+
+    const toggleBtn = el(
+      'button',
+      {
+        type: 'button',
+        className: 'btn btn-sm',
+        onClick: async () => {
+          showBanner(dom.servicesError, '');
+          toggleBtn.disabled = true;
+          try {
+            await apiFetch(`/api/services/${svc.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ isActive: !svc.isActive }),
+            });
+            showToast(svc.isActive ? 'Layanan dinonaktifkan.' : 'Layanan diaktifkan.');
+            await loadServicesList();
+          } catch (err) {
+            if (err.status !== 401) {
+              showBanner(dom.servicesError, err.message);
+            }
+          } finally {
+            toggleBtn.disabled = false;
+          }
+        },
+      },
+      svc.isActive ? 'Nonaktifkan' : 'Aktifkan'
+    );
+
+    return el(
       'tr',
       {},
       el('td', {}, el('strong', {}, svc.name)),
       el('td', {}, svc.unit),
       el('td', { className: 'num' }, formatRupiah(svc.priceIdr)),
       el('td', { className: 'num' }, `${svc.durationHours} jam`),
-      el(
-        'td',
-        {},
-        el('span', { className: `badge ${svc.isActive ? 'badge-siap' : 'badge-diambil'}` }, svc.isActive ? 'Aktif' : 'Nonaktif')
-      ),
-      el(
-        'td',
-        {},
-        el(
-          'button',
-          {
-            type: 'button',
-            className: 'btn btn-sm',
-            onClick: async () => {
-              showBanner(dom.servicesError, '');
-              try {
-                await apiFetch(`/api/services/${svc.id}`, {
-                  method: 'PATCH',
-                  body: JSON.stringify({ isActive: !svc.isActive }),
-                });
-                showToast(svc.isActive ? 'Layanan dinonaktifkan.' : 'Layanan diaktifkan.');
-                await loadServicesList();
-              } catch (err) {
-                showBanner(dom.servicesError, err.message);
-              }
-            },
-          },
-          svc.isActive ? 'Nonaktifkan' : 'Aktifkan'
-        )
-      )
-    )
-  );
+      el('td', {}, statusBadge),
+      el('td', {}, el('div', { className: 'inline-row' }, editBtn, toggleBtn))
+    );
+  });
 
   dom.servicesTbody.replaceChildren(...rows);
 }
 
 // Rekap Kas Tab
 async function loadRekapSummary() {
+  const seq = ++state.rekapRequestSeq;
   showBanner(dom.rekapError, '');
   const dateVal = dom.rekapDate.value || todayJakartaDate();
   try {
     const data = await apiFetch(`/api/summary?date=${encodeURIComponent(dateVal)}`);
+    if (seq !== state.rekapRequestSeq || !state.authenticated) return;
+
     dom.rekapCashTotal.textContent = formatRupiah(data.cashTotalIdr ?? 0);
     dom.rekapNewOrders.textContent = String(data.newOrdersCount ?? 0);
     dom.rekapUnpaidTotal.textContent = formatRupiah(data.unpaidTotalIdr ?? 0);
@@ -1096,6 +1279,7 @@ async function loadRekapSummary() {
     dom.rekapQris.textContent = formatRupiah(data.cashByMethod?.QRIS ?? 0);
     dom.rekapTransfer.textContent = formatRupiah(data.cashByMethod?.TRANSFER ?? 0);
   } catch (err) {
+    if (seq !== state.rekapRequestSeq) return;
     if (err.status !== 401) {
       showBanner(dom.rekapError, err.message);
     }
@@ -1134,9 +1318,6 @@ dom.logoutBtn.addEventListener('click', async () => {
   } catch {
     // Ignore logout network error and reset local UI state
   }
-  state.selectedOrderId = null;
-  state.selectedOrder = null;
-  closeNewOrderDrawer();
   setAuthenticated(false);
 });
 
@@ -1177,11 +1358,24 @@ dom.newPayKind.addEventListener('change', () => {
   const kind = dom.newPayKind.value;
   dom.newPayMethodWrap.classList.toggle('hidden', kind === 'NONE');
   dom.newPayDpWrap.classList.toggle('hidden', kind !== 'DP');
+  updateNewOrderPreview({ syncErrorBanner: false });
+});
+
+dom.newPayAmount.addEventListener('input', () => {
+  updateNewOrderPreview({ syncErrorBanner: false });
 });
 
 dom.newOrderForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   showBanner(dom.newOrderError, '');
+
+  const previewCheck = updateNewOrderPreview({ syncErrorBanner: true });
+  if (!previewCheck.valid) {
+    if (!previewCheck.firstError) {
+      showBanner(dom.newOrderError, 'Minimal 1 item layanan wajib dipilih.');
+    }
+    return;
+  }
 
   const payload = {
     customerName: dom.newCustomerName.value.trim(),
@@ -1213,7 +1407,9 @@ dom.newOrderForm.addEventListener('submit', async (e) => {
     await refreshOrdersAndKpi();
     renderInspector();
   } catch (err) {
-    showBanner(dom.newOrderError, err.message);
+    if (err.status !== 401) {
+      showBanner(dom.newOrderError, err.message);
+    }
   } finally {
     dom.submitNewOrderBtn.disabled = false;
   }
@@ -1241,7 +1437,9 @@ dom.newServiceForm.addEventListener('submit', async (e) => {
     showToast('Layanan baru berhasil ditambahkan.');
     await loadServicesList();
   } catch (err) {
-    showBanner(dom.newServiceError, err.message);
+    if (err.status !== 401) {
+      showBanner(dom.newServiceError, err.message);
+    }
   } finally {
     dom.submitServiceBtn.disabled = false;
   }

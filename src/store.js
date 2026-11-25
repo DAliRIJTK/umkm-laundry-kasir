@@ -8,6 +8,7 @@ import {
   computeLineSubtotalIdr,
   derivePaymentStatus,
   formatOrderCode,
+  isTerminalStatus,
   maskPhone,
   normalizePhone,
   nowJakartaIso,
@@ -15,6 +16,18 @@ import {
   parseQtyToTenths,
   todayJakartaDate,
 } from './domain.js';
+
+function withTransaction(db, fn) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
 
 export function createStore(db) {
   function getSettingsMap() {
@@ -156,8 +169,7 @@ export function createStore(db) {
     const totalIdr = Number(row.total_idr);
     const paidIdr = payments.reduce((sum, p) => sum + p.amountIdr, 0);
     const remainingIdr = Math.max(0, totalIdr - paidIdr);
-    const isTerminal = row.status === 'DIAMBIL' || row.status === 'DIBATALKAN';
-    const isOverdue = !isTerminal && Date.parse(row.due_at) < Date.parse(nowIso);
+    const isOverdue = !isTerminalStatus(row.status) && Date.parse(row.due_at) < Date.parse(nowIso);
 
     return {
       id: Number(row.id),
@@ -226,34 +238,6 @@ export function createStore(db) {
       throw new DomainError('Maksimal 20 baris item per nota.');
     }
 
-    const resolvedItems = [];
-    let maxHours = 1;
-    let totalIdr = 0;
-
-    for (const rawItem of input.items) {
-      const svcId = Number(rawItem?.serviceId);
-      const svc = db.prepare('SELECT * FROM services WHERE id = ?').get(svcId);
-      if (!svc) {
-        throw new DomainError('Layanan yang dipilih tidak ditemukan.');
-      }
-      if (!svc.is_active) {
-        throw new DomainError(`Layanan "${svc.name}" sedang nonaktif.`);
-      }
-      const qtyTenths = parseQtyToTenths(rawItem.qty, svc.unit);
-      const unitPriceIdr = Number(svc.price_idr);
-      const subtotalIdr = computeLineSubtotalIdr(qtyTenths, unitPriceIdr);
-      totalIdr += subtotalIdr;
-      maxHours = Math.max(maxHours, Number(svc.duration_hours));
-      resolvedItems.push({
-        serviceId: Number(svc.id),
-        serviceName: svc.name,
-        unit: svc.unit,
-        qtyTenths,
-        unitPriceIdr,
-        subtotalIdr,
-      });
-    }
-
     if (
       input.initialPayment !== undefined &&
       (typeof input.initialPayment !== 'object' ||
@@ -264,32 +248,58 @@ export function createStore(db) {
     }
     const initPay = input.initialPayment || { kind: 'NONE' };
     const payKind = String(initPay.kind ?? 'NONE').toUpperCase();
-    let paymentToInsert = null;
+    const payMethod = String(initPay.method ?? 'TUNAI').toUpperCase();
+    if (payKind !== 'NONE' && !PAYMENT_METHODS.includes(payMethod)) {
+      throw new DomainError('Metode pembayaran harus TUNAI, QRIS, atau TRANSFER.');
+    }
+    if (payKind !== 'NONE' && payKind !== 'DP' && payKind !== 'LUNAS') {
+      throw new DomainError('Jenis pembayaran awal harus NONE, DP, atau LUNAS.');
+    }
 
-    if (payKind !== 'NONE') {
-      const method = String(initPay.method ?? 'TUNAI').toUpperCase();
-      if (!PAYMENT_METHODS.includes(method)) {
-        throw new DomainError('Metode pembayaran harus TUNAI, QRIS, atau TRANSFER.');
+    return withTransaction(db, () => {
+      const resolvedItems = [];
+      let maxHours = 1;
+      let totalIdr = 0;
+
+      for (const rawItem of input.items) {
+        const svcId = Number(rawItem?.serviceId);
+        const svc = db.prepare('SELECT * FROM services WHERE id = ?').get(svcId);
+        if (!svc) {
+          throw new DomainError('Layanan yang dipilih tidak ditemukan.');
+        }
+        if (!svc.is_active) {
+          throw new DomainError(`Layanan "${svc.name}" sedang nonaktif.`);
+        }
+        const qtyTenths = parseQtyToTenths(rawItem.qty, svc.unit);
+        const unitPriceIdr = Number(svc.price_idr);
+        const subtotalIdr = computeLineSubtotalIdr(qtyTenths, unitPriceIdr);
+        totalIdr += subtotalIdr;
+        maxHours = Math.max(maxHours, Number(svc.duration_hours));
+        resolvedItems.push({
+          serviceId: Number(svc.id),
+          serviceName: svc.name,
+          unit: svc.unit,
+          qtyTenths,
+          unitPriceIdr,
+          subtotalIdr,
+        });
       }
+
+      let paymentToInsert = null;
       if (payKind === 'LUNAS') {
-        paymentToInsert = { amountIdr: totalIdr, method, kind: 'PELUNASAN', note: 'Lunas saat order' };
+        paymentToInsert = { amountIdr: totalIdr, method: payMethod, kind: 'PELUNASAN', note: 'Lunas saat order' };
       } else if (payKind === 'DP') {
         const dpAmt = parsePositiveIntIdr(initPay.amountIdr, 'Nominal DP');
         if (dpAmt >= totalIdr) {
           throw new DomainError('Nominal DP harus lebih kecil dari total tagihan (gunakan Lunas jika penuh).');
         }
-        paymentToInsert = { amountIdr: dpAmt, method, kind: 'DP', note: 'DP saat order' };
-      } else {
-        throw new DomainError('Jenis pembayaran awal harus NONE, DP, atau LUNAS.');
+        paymentToInsert = { amountIdr: dpAmt, method: payMethod, kind: 'DP', note: 'DP saat order' };
       }
-    }
 
-    const nowIso = nowJakartaIso();
-    const today = todayJakartaDate();
-    const dueAt = addHoursJakartaIso(nowIso, maxHours);
+      const nowIso = nowJakartaIso();
+      const today = nowIso.slice(0, 10);
+      const dueAt = addHoursJakartaIso(nowIso, maxHours);
 
-    db.exec('BEGIN IMMEDIATE');
-    try {
       const prefix = `LND-${today.replaceAll('-', '')}-`;
       const seqRow = db
         .prepare('SELECT COALESCE(MAX(CAST(substr(order_code, 14) AS INTEGER)), 0) AS max_seq FROM orders WHERE order_code LIKE ?')
@@ -330,12 +340,8 @@ export function createStore(db) {
         ).run(orderId, paymentToInsert.amountIdr, paymentToInsert.method, paymentToInsert.kind, nowIso, paymentToInsert.note);
       }
 
-      db.exec('COMMIT');
       return getOrderById(orderId);
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
   }
 
   function advanceOrderStatus(id, { status, rackCode } = {}) {
@@ -344,13 +350,12 @@ export function createStore(db) {
       throw new DomainError('Status order tidak dikenal.');
     }
 
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    return withTransaction(db, () => {
       const order = getOrderById(id);
-      if (order.status === 'DIAMBIL' || order.status === 'DIBATALKAN') {
+      if (isTerminalStatus(order.status)) {
         throw new DomainError(`Order berstatus ${order.status} tidak dapat diubah lagi.`, 409);
       }
-      const nextRack = rackCode !== undefined ? String(rackCode).trim().slice(0, 20) : order.rackCode;
+      const nextRack = rackCode !== undefined ? String(rackCode ?? '').trim().slice(0, 20) : order.rackCode;
 
       if (nextStatus === order.status) {
         if (rackCode !== undefined && nextRack !== order.rackCode) {
@@ -360,7 +365,6 @@ export function createStore(db) {
             id
           );
         }
-        db.exec('COMMIT');
         return getOrderById(id);
       }
 
@@ -379,19 +383,14 @@ export function createStore(db) {
       }
 
       const nowIso = nowJakartaIso();
-      const completedAt =
-        nextStatus === 'DIAMBIL' || nextStatus === 'DIBATALKAN' ? nowIso : null;
+      const completedAt = isTerminalStatus(nextStatus) ? nowIso : null;
 
       db.prepare(
         `UPDATE orders SET status = ?, rack_code = ?, updated_at = ?, completed_at = COALESCE(?, completed_at) WHERE id = ?`
       ).run(nextStatus, nextRack, nowIso, completedAt, id);
 
-      db.exec('COMMIT');
       return getOrderById(id);
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
   }
 
   function recordPayment(id, { amountIdr, method, note = '' } = {}) {
@@ -402,8 +401,7 @@ export function createStore(db) {
     const amt = parsePositiveIntIdr(amountIdr, 'Nominal pembayaran');
     const cleanNote = String(note ?? '').trim().slice(0, 120);
 
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    return withTransaction(db, () => {
       const order = getOrderById(id);
       if (order.status === 'DIBATALKAN') {
         throw new DomainError('Order yang sudah dibatalkan tidak dapat menerima pembayaran.', 409);
@@ -426,12 +424,8 @@ export function createStore(db) {
       ).run(id, amt, cleanMethod, kind, nowIso, cleanNote);
 
       db.prepare('UPDATE orders SET updated_at = ? WHERE id = ?').run(nowIso, id);
-      db.exec('COMMIT');
       return getOrderById(id);
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
   }
 
   function getCashSummary(date = todayJakartaDate()) {
@@ -440,28 +434,40 @@ export function createStore(db) {
       throw new DomainError('Format tanggal harus YYYY-MM-DD.');
     }
 
-    const orders = listOrders();
+    const nowMs = Date.now();
+    const activeOrders = db
+      .prepare(
+        `SELECT o.status, o.due_at, o.total_idr, COALESCE(SUM(p.amount_idr), 0) AS paid_idr
+         FROM orders o
+         LEFT JOIN payments p ON p.order_id = o.id
+         WHERE o.status NOT IN ('DIAMBIL', 'DIBATALKAN')
+         GROUP BY o.id`
+      )
+      .all();
+
     let activeCount = 0;
     let readyCount = 0;
     let overdueCount = 0;
     let unpaidCount = 0;
     let unpaidTotalIdr = 0;
-    let newOrdersCount = 0;
 
-    for (const o of orders) {
-      if (o.createdAt.startsWith(cleanDate) && o.status !== 'DIBATALKAN') {
-        newOrdersCount++;
-      }
-      if (o.status !== 'DIAMBIL' && o.status !== 'DIBATALKAN') {
-        activeCount++;
-        if (o.status === 'SIAP_AMBIL') readyCount++;
-        if (o.isOverdue) overdueCount++;
-        if (o.remainingIdr > 0) {
-          unpaidCount++;
-          unpaidTotalIdr += o.remainingIdr;
-        }
+    for (const o of activeOrders) {
+      activeCount++;
+      if (o.status === 'SIAP_AMBIL') readyCount++;
+      if (Date.parse(o.due_at) < nowMs) overdueCount++;
+      const remaining = Math.max(0, Number(o.total_idr) - Number(o.paid_idr));
+      if (remaining > 0) {
+        unpaidCount++;
+        unpaidTotalIdr += remaining;
       }
     }
+
+    const newOrdersRow = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM orders
+         WHERE substr(created_at, 1, 10) = ? AND status != 'DIBATALKAN'`
+      )
+      .get(cleanDate);
 
     const payRows = db
       .prepare(
@@ -490,7 +496,7 @@ export function createStore(db) {
       unpaidTotalIdr,
       cashTotalIdr,
       cashByMethod,
-      newOrdersCount,
+      newOrdersCount: Number(newOrdersRow.c),
     };
   }
 

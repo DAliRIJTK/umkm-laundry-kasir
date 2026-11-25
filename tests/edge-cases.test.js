@@ -143,20 +143,32 @@ test('rejects dirty UMKM order inputs: comma decimal handled, negative/zero/inac
       assert.equal(res.status, 400);
     }
 
-    // Accepts Indonesian comma decimal "2,5" & +62 phone normalization
+    // Accepts Indonesian comma decimal "2,5", +62 phone normalization, and null rackCode as empty string
     const okRes = await fetch(`${srv.baseUrl}/api/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({
         customerName: 'Bu Dewi',
         customerPhone: '+62 812-3333-4444',
+        rackCode: null,
         items: [{ serviceId: kgSvc.id, qty: '2,5' }],
       }),
     });
     assert.equal(okRes.status, 201);
     const { order } = await okRes.json();
     assert.equal(order.customerPhone, '081233334444');
+    assert.equal(order.rackCode, '');
     assert.equal(order.totalIdr, Math.round((25 * kgSvc.priceIdr) / 10));
+
+    // Updating status with rackCode: null keeps rackCode as empty string, never literal "null"
+    const rackNullRes = await fetch(`${srv.baseUrl}/api/orders/${order.id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ status: 'DICUCI', rackCode: null }),
+    });
+    assert.equal(rackNullRes.status, 200);
+    const rackNullData = await rackNullRes.json();
+    assert.equal(rackNullData.order.rackCode, '');
   } finally {
     await srv.close();
   }
@@ -239,12 +251,18 @@ test('demo seed includes overdue order filter, unpaid filter, and static routes 
     assert.ok(unpaidData.orders.length >= 2);
     assert.ok(unpaidData.orders.every((o) => o.remainingIdr > 0));
 
-    // Static routes & security headers
-    for (const staticPath of ['/', '/track', '/styles.css', '/kasir.js', '/track.js', '/assets/logo.svg']) {
+    const allRes = await fetch(`${srv.baseUrl}/api/orders`, { headers: { Cookie: cookie } });
+    const allData = await allRes.json();
+    assert.equal(allData.orders.length, 6);
+    assert.ok(allData.orders.some((o) => o.status === 'DIBATALKAN'));
+
+    // Static routes & strict security headers (no unsafe-inline in CSP)
+    for (const staticPath of ['/', '/track', '/styles.css', '/shared.js', '/kasir.js', '/track.js', '/assets/logo.svg']) {
       const res = await fetch(`${srv.baseUrl}${staticPath}`);
       assert.equal(res.status, 200, `Expected 200 for ${staticPath}`);
       assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
       assert.equal(res.headers.get('x-frame-options'), 'DENY');
+      assert.ok(!res.headers.get('content-security-policy')?.includes('unsafe-inline'));
     }
 
     // Path traversal blocked

@@ -31,7 +31,7 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'same-origin',
   'Content-Security-Policy':
-    "default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'",
+    "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'",
 };
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
@@ -274,6 +274,7 @@ export function createApp({ dbPath, pin, seedDemo = true } = {}) {
         sendJson(res, err.statusCode, { error: err.message });
         return;
       }
+      console.error('Unhandled server error:', err);
       sendJson(res, 500, { error: 'Terjadi kesalahan internal server.' });
     }
   });

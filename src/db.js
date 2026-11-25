@@ -8,6 +8,7 @@ import { addHoursJakartaIso, nowJakartaIso, todayJakartaDate } from './domain.js
 const SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -130,6 +131,8 @@ function seedDemoOrders(db) {
   const now = nowJakartaIso();
   const yesterday = addHoursJakartaIso(now, -28);
   const twoDaysAgo = addHoursJakartaIso(now, -52);
+  const yestCodeDate = yesterday.slice(0, 10).replaceAll('-', '');
+  const twoDaysCodeDate = twoDaysAgo.slice(0, 10).replaceAll('-', '');
 
   const demoRows = [
     {
@@ -159,7 +162,7 @@ function seedDemoOrders(db) {
       payments: [[10000, 'QRIS', 'DP', addHoursJakartaIso(now, -20), 'DP awal']],
     },
     {
-      code: `LND-${today.replaceAll('-', '')}-003`,
+      code: `LND-${twoDaysCodeDate}-001`,
       name: 'Kos Melati #4',
       phone: '085700004411',
       status: 'DICUCI',
@@ -172,7 +175,7 @@ function seedDemoOrders(db) {
       payments: [[48000, 'TRANSFER', 'PELUNASAN', twoDaysAgo, 'Transfer BCA']],
     },
     {
-      code: `LND-${today.replaceAll('-', '')}-004`,
+      code: `LND-${yestCodeDate}-001`,
       name: 'Mba Nadia',
       phone: '081900003344',
       status: 'DISETRIKA',
@@ -185,7 +188,7 @@ function seedDemoOrders(db) {
       payments: [[50000, 'TUNAI', 'PELUNASAN', yesterday, 'Lunas di kasir']],
     },
     {
-      code: `LND-${today.replaceAll('-', '')}-005`,
+      code: `LND-${yestCodeDate}-002`,
       name: 'Mas Dimas',
       phone: '082100007766',
       status: 'DIAMBIL',
@@ -196,6 +199,19 @@ function seedDemoOrders(db) {
       completedAt: now,
       items: [[byName['Cuci Kering Lipat'], 45, 27000]],
       payments: [[27000, 'TUNAI', 'PELUNASAN', now, 'Bayar saat ambil']],
+    },
+    {
+      code: `LND-${today.replaceAll('-', '')}-003`,
+      name: 'Ibu Lina (Batal)',
+      phone: '081500002299',
+      status: 'DIBATALKAN',
+      rack: '',
+      note: 'Pelanggan batal sebelum dicuci',
+      createdAt: addHoursJakartaIso(now, -3),
+      dueAt: addHoursJakartaIso(now, 21),
+      completedAt: addHoursJakartaIso(now, -2),
+      items: [[byName['Setrika Saja'], 20, 11000]],
+      payments: [],
     },
   ];
 

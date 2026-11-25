@@ -95,12 +95,20 @@ export function computeLineSubtotalIdr(qtyTenths, unitPriceIdr) {
   if (!Number.isInteger(unitPriceIdr) || unitPriceIdr <= 0) {
     throw new DomainError('Harga satuan layanan tidak valid.');
   }
-  return Math.round((qtyTenths * unitPriceIdr) / 10);
+  const subtotal = Math.round((qtyTenths * unitPriceIdr) / 10);
+  if (subtotal <= 0) {
+    throw new DomainError('Subtotal item harus lebih dari Rp 0.');
+  }
+  return subtotal;
 }
 
 export function canTransitionStatus(currentStatus, nextStatus) {
   const allowed = ALLOWED_TRANSITIONS[currentStatus];
   return Boolean(allowed && allowed.has(nextStatus));
+}
+
+export function isTerminalStatus(status) {
+  return status === 'DIAMBIL' || status === 'DIBATALKAN';
 }
 
 export function derivePaymentStatus(paidIdr, totalIdr) {
@@ -116,6 +124,15 @@ export function formatOrderCode(jakartaDate, seq) {
 }
 
 export function parsePositiveIntIdr(value, fieldLabel = 'Nominal') {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'boolean' ||
+    typeof value === 'object' ||
+    String(value).trim() === ''
+  ) {
+    throw new DomainError(`${fieldLabel} harus bilangan bulat Rupiah lebih dari 0.`);
+  }
   const num = Number(value);
   if (!Number.isInteger(num) || num <= 0) {
     throw new DomainError(`${fieldLabel} harus bilangan bulat Rupiah lebih dari 0.`);

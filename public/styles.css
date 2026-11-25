@@ -230,6 +230,38 @@ h1, h2, h3, h4, p {
   resize: vertical;
 }
 
+.input-sm {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.input-invalid {
+  border-color: var(--status-error-ink);
+}
+
+.sr-only-copy {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.meta-item-full {
+  grid-column: 1 / -1;
+}
+
+.flex-grow-field {
+  flex: 1 1 160px;
+}
+
+.footer-link-row {
+  margin-top: 6px;
+}
+
 /* Badges */
 .badge {
   display: inline-flex;

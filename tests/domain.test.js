@@ -8,6 +8,8 @@ import {
   canTransitionStatus,
   derivePaymentStatus,
   formatOrderCode,
+  isTerminalStatus,
+  parsePositiveIntIdr,
 } from '../src/domain.js';
 
 test('normalizePhone normalizes Indonesian prefixes and rejects invalid numbers', () => {
@@ -33,10 +35,24 @@ test('parseQtyToTenths handles decimal kg without float drift and rejects fracti
   assert.throws(() => parseQtyToTenths(2.55, 'KG'), /1 angka di belakang koma/i);
 });
 
-test('computeLineSubtotalIdr computes exact integer Rupiah for decimal kg', () => {
+test('computeLineSubtotalIdr computes exact integer Rupiah for decimal kg and rejects Rp 0 subtotal', () => {
   assert.equal(computeLineSubtotalIdr(25, 7000), 17500);
   assert.equal(computeLineSubtotalIdr(32, 8000), 25600);
   assert.equal(computeLineSubtotalIdr(10, 25000), 25000);
+  assert.throws(() => computeLineSubtotalIdr(1, 3), /lebih dari Rp 0/);
+});
+
+test('parsePositiveIntIdr rejects booleans, empty strings, null, and non-integers', () => {
+  assert.equal(parsePositiveIntIdr(15000), 15000);
+  for (const bad of [true, false, '', '   ', null, undefined, {}, [], 0, -100, 10.5]) {
+    assert.throws(() => parsePositiveIntIdr(bad), /Rupiah lebih dari 0/);
+  }
+});
+
+test('isTerminalStatus identifies DIAMBIL and DIBATALKAN', () => {
+  assert.equal(isTerminalStatus('DIAMBIL'), true);
+  assert.equal(isTerminalStatus('DIBATALKAN'), true);
+  assert.equal(isTerminalStatus('SIAP_AMBIL'), false);
 });
 
 test('canTransitionStatus enforces allowed laundry workflow', () => {

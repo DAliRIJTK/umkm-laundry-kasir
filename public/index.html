@@ -175,9 +175,27 @@
                     <button id="add-item-row-btn" type="button" class="btn btn-sm">+ Tambah Layanan</button>
                   </div>
                   <div id="new-order-items" class="item-rows"></div>
-                  <div class="total-strip">
-                    <span>Total Tagihan</span>
-                    <span id="new-order-total" class="tabular">Rp 0</span>
+                  <div id="new-order-preview" class="summary-rows" aria-live="polite">
+                    <div class="summary-line">
+                      <span>Item Dipilih</span>
+                      <span id="preview-item-count" class="tabular">0 item</span>
+                    </div>
+                    <div class="summary-line">
+                      <span>Estimasi Selesai</span>
+                      <span id="preview-due-at" class="tabular">-</span>
+                    </div>
+                    <div class="summary-line">
+                      <span>Pembayaran Awal</span>
+                      <span id="preview-initial-pay" class="tabular">Belum Bayar (Rp 0)</span>
+                    </div>
+                    <div class="summary-line">
+                      <span>Sisa Saat Pengambilan</span>
+                      <span id="preview-remaining" class="tabular">Rp 0</span>
+                    </div>
+                    <div class="summary-line strong">
+                      <span>Total Tagihan</span>
+                      <span id="new-order-total" class="tabular">Rp 0</span>
+                    </div>
                   </div>
                 </div>
 

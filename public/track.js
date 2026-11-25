@@ -1,13 +1,13 @@
 // Pure Vanilla ESM Public Nota Tracker (no raw innerHTML with untrusted data)
-
-const STATUS_META = {
-  DITERIMA: { label: 'Diterima', badgeClass: 'badge-diterima' },
-  DICUCI: { label: 'Dicuci', badgeClass: 'badge-dicuci' },
-  DISETRIKA: { label: 'Disetrika', badgeClass: 'badge-disetrika' },
-  SIAP_AMBIL: { label: 'Siap Diambil', badgeClass: 'badge-siap' },
-  DIAMBIL: { label: 'Sudah Diambil', badgeClass: 'badge-diambil' },
-  DIBATALKAN: { label: 'Dibatalkan', badgeClass: 'badge-error' },
-};
+import {
+  el,
+  formatDateTimeWib,
+  makePaymentBadge,
+  makeStatusBadge,
+  renderItemsTableEl,
+  renderPaymentSummaryEl,
+  showBanner,
+} from '/shared.js';
 
 const TIMELINE_STEPS = [
   { key: 'DITERIMA', label: 'Diterima', desc: 'Cucian telah dicatat di meja kasir.' },
@@ -16,62 +16,6 @@ const TIMELINE_STEPS = [
   { key: 'SIAP_AMBIL', label: 'Siap Diambil', desc: 'Cucian selesai dan siap diambil di toko.' },
   { key: 'DIAMBIL', label: 'Sudah Diambil', desc: 'Cucian sudah diserahkan kepada pelanggan.' },
 ];
-
-const PAYMENT_STATUS_META = {
-  BELUM_BAYAR: { label: 'Belum Bayar', badgeClass: 'badge-warn' },
-  DP: { label: 'DP', badgeClass: 'badge-warn' },
-  LUNAS: { label: 'Lunas', badgeClass: 'badge-lunas' },
-};
-
-const idrFmt = new Intl.NumberFormat('id-ID');
-const dtFmt = new Intl.DateTimeFormat('id-ID', {
-  timeZone: 'Asia/Jakarta',
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-
-function formatRupiah(amount) {
-  return `Rp ${idrFmt.format(Number(amount || 0))}`;
-}
-
-function formatDateTimeWib(iso) {
-  if (!iso) return '-';
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return iso;
-  return `${dtFmt.format(new Date(ms))} WIB`;
-}
-
-function formatQty(qty, unit) {
-  const num = Number(qty || 0);
-  const str = Number.isInteger(num) ? String(num) : num.toFixed(1);
-  return `${str} ${unit}`;
-}
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === 'className') {
-      node.className = v;
-    } else if (k.startsWith('on') && typeof v === 'function') {
-      node.addEventListener(k.slice(2).toLowerCase(), v);
-    } else {
-      node.setAttribute(k, String(v));
-    }
-  }
-  for (const child of children) {
-    if (child === undefined || child === null || child === false) continue;
-    if (typeof child === 'string' || typeof child === 'number') {
-      node.appendChild(document.createTextNode(String(child)));
-    } else {
-      node.appendChild(child);
-    }
-  }
-  return node;
-}
 
 const dom = {
   storeName: document.getElementById('track-store-name'),
@@ -83,24 +27,11 @@ const dom = {
   resultPanel: document.getElementById('track-result'),
 };
 
-function showError(message) {
-  if (!message) {
-    dom.errorBox.textContent = '';
-    dom.errorBox.classList.add('hidden');
-    return;
-  }
-  dom.errorBox.textContent = message;
-  dom.errorBox.classList.remove('hidden');
-}
-
 function renderOrderResult(order) {
   if (order.store?.name) {
     dom.storeName.textContent = order.store.name;
     document.title = `Lacak ${order.orderCode} — ${order.store.name}`;
   }
-
-  const statusMeta = STATUS_META[order.status] || { label: order.status, badgeClass: 'badge-diambil' };
-  const payMeta = PAYMENT_STATUS_META[order.paymentStatus] || { label: order.paymentStatus, badgeClass: 'badge-warn' };
 
   const headerSection = el(
     'div',
@@ -112,8 +43,8 @@ function renderOrderResult(order) {
       el(
         'div',
         { className: 'order-row-badges' },
-        el('span', { className: `badge ${statusMeta.badgeClass}` }, statusMeta.label),
-        el('span', { className: `badge ${payMeta.badgeClass}` }, payMeta.label)
+        makeStatusBadge(order.status),
+        makePaymentBadge(order.paymentStatus)
       )
     ),
     el(
@@ -214,45 +145,14 @@ function renderOrderResult(order) {
     'div',
     { className: 'inspector-section' },
     el('h2', { className: 'section-title' }, 'Rincian Layanan'),
-    el(
-      'div',
-      { className: 'table-wrap' },
-      el(
-        'table',
-        { className: 'data-table' },
-        el(
-          'thead',
-          {},
-          el('tr', {}, el('th', {}, 'Layanan'), el('th', { className: 'num' }, 'Qty'), el('th', { className: 'num' }, 'Subtotal'))
-        ),
-        el(
-          'tbody',
-          {},
-          ...order.items.map((it) =>
-            el(
-              'tr',
-              {},
-              el('td', {}, it.serviceName),
-              el('td', { className: 'num' }, formatQty(it.qty, it.unit)),
-              el('td', { className: 'num' }, formatRupiah(it.subtotalIdr))
-            )
-          )
-        )
-      )
-    )
+    renderItemsTableEl(order.items)
   );
 
   const paymentBox = el(
     'div',
     { className: 'inspector-section' },
     el('h2', { className: 'section-title' }, 'Ringkasan Pembayaran'),
-    el(
-      'div',
-      { className: 'summary-rows' },
-      el('div', { className: 'summary-line' }, el('span', {}, 'Total Tagihan'), el('strong', {}, formatRupiah(order.totalIdr))),
-      el('div', { className: 'summary-line' }, el('span', {}, 'Sudah Dibayar'), el('span', {}, formatRupiah(order.paidIdr))),
-      el('div', { className: 'summary-line strong' }, el('span', {}, 'Sisa Bayar'), el('span', {}, formatRupiah(order.remainingIdr)))
-    )
+    renderPaymentSummaryEl(order)
   );
 
   const store = order.store || {};
@@ -261,7 +161,7 @@ function renderOrderResult(order) {
     store.address ? el('span', {}, store.address) : null,
     store.hours ? el('span', {}, `Jam buka: ${store.hours}`) : null,
     store.phone ? el('span', {}, `Telepon / WA: ${store.phone}`) : null,
-    el('div', { style: 'margin-top: 6px;' }, el('a', { href: '/' }, 'Login Kasir')),
+    el('div', { className: 'footer-link-row' }, el('a', { href: '/' }, 'Login Kasir')),
   ].filter(Boolean);
 
   const storeFooter = el('footer', { className: 'store-footer' }, ...footerLines);
@@ -283,13 +183,13 @@ function renderOrderResult(order) {
 
 dom.form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  showError('');
+  showBanner(dom.errorBox, '');
 
   const code = dom.codeInput.value.trim().toUpperCase();
   const phone4 = dom.phone4Input.value.trim();
 
   if (!code || !/^\d{4}$/.test(phone4)) {
-    showError('Masukkan kode nota dan tepat 4 digit terakhir nomor HP.');
+    showBanner(dom.errorBox, 'Masukkan kode nota dan tepat 4 digit terakhir nomor HP.');
     dom.resultPanel.classList.add('hidden');
     return;
   }
@@ -305,7 +205,7 @@ dom.form.addEventListener('submit', async (e) => {
     renderOrderResult(data.order);
   } catch (err) {
     dom.resultPanel.classList.add('hidden');
-    showError(err.message);
+    showBanner(dom.errorBox, err.message);
   } finally {
     dom.submitBtn.disabled = false;
   }
